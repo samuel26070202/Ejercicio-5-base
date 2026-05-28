@@ -1,54 +1,85 @@
 const express = require('express');
 const app = express();
-
 app.use(express.json());
 
-let contacts = [];
-let nextId = 1;
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validateContact({ name, email }) {
+  if (!name || name.trim() === '') {
+    return { valid: false, error: 'El campo name es requerido.' };
+  }
+  if (!email || !EMAIL_REGEX.test(email)) {
+    return { valid: false, error: 'El formato del email es inválido.' };
+  }
+  return { valid: true };
+}
+
+
+let contacts = [
+  { id: 1, name: 'Ana García',   email: 'ana@example.com',  phone: '555-0001', favorite: false, createdAt: '2024-01-10T08:00:00.000Z' },
+  { id: 2, name: 'Luis Pérez',   email: 'luis@example.com', phone: '555-0002', favorite: true,  createdAt: '2024-01-11T09:00:00.000Z' },
+  { id: 3, name: 'Eva Martínez', email: 'eva@example.com',  phone: null,       favorite: false, createdAt: '2024-01-12T10:00:00.000Z' },
+];
+let nextId = 4;
 
 function resetContacts() {
   contacts = [
-    { id: 1, name: 'Samuel Mahecha', email: 'samuel@sena.edu.co', phone: '3001234567' },
-    { id: 2, name: 'Instructor SENA', email: 'instructor@sena.edu.co' }
+    { id: 1, name: 'Ana García',   email: 'ana@example.com',  phone: '555-0001', favorite: false, createdAt: '2024-01-10T08:00:00.000Z' },
+    { id: 2, name: 'Luis Pérez',   email: 'luis@example.com', phone: '555-0002', favorite: true,  createdAt: '2024-01-11T09:00:00.000Z' },
+    { id: 3, name: 'Eva Martínez', email: 'eva@example.com',  phone: null,       favorite: false, createdAt: '2024-01-12T10:00:00.000Z' },
   ];
-  nextId = 3;
+  nextId = 4;
 }
-
-resetContacts();
 
 
 app.get('/api/contacts', (req, res) => {
-  res.status(200).json(contacts);
+  const { search, favorite } = req.query;
+  let result = [...contacts];
+
+  if (search && search.trim() !== '') {
+    const q = search.trim().toLowerCase();
+    result = result.filter(
+      c => c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
+    );
+  }
+
+  if (favorite === 'true') {
+    result = result.filter(c => c.favorite === true);
+  }
+
+  res.json(result);
 });
 
 
 app.get('/api/contacts/:id', (req, res) => {
   const contact = contacts.find(c => c.id === Number(req.params.id));
-  if (!contact) {
-    return res.status(404).json({ error: 'Contacto no encontrado.' });
-  }
-  res.status(200).json(contact);
+  if (!contact) return res.status(404).json({ status: 404, error: 'Contacto no encontrado.' });
+  res.json(contact);
 });
 
-
+// ── POST /api/contacts
 app.post('/api/contacts', (req, res) => {
   const { name, email, phone } = req.body;
 
-  if (!name || name.trim() === '') {
-    return res.status(400).json({ error: 'El campo name es requerido.' });
+  const validation = validateContact({ name, email });
+  if (!validation.valid) {
+    return res.status(400).json({ status: 400, error: validation.error });
   }
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ error: 'El email es requerido y debe contener un @.' });
+
+  const duplicate = contacts.find(c => c.email.toLowerCase() === email.toLowerCase());
+  if (duplicate) {
+    return res.status(409).json({ status: 409, error: 'Ya existe un contacto con ese email.' });
   }
 
   const newContact = {
     id: nextId++,
     name: name.trim(),
-    email: email.trim(),
-    phone: phone ? phone.trim() : undefined
+    email: email.toLowerCase(),
+    phone: phone?.trim() || null,
+    favorite: false,
+    createdAt: new Date().toISOString(),
   };
-
   contacts.push(newContact);
   res.status(201).json(newContact);
 });
@@ -56,34 +87,60 @@ app.post('/api/contacts', (req, res) => {
 
 app.put('/api/contacts/:id', (req, res) => {
   const contact = contacts.find(c => c.id === Number(req.params.id));
-  if (!contact) {
-    return res.status(404).json({ error: 'Contacto no encontrado.' });
-  }
+  if (!contact) return res.status(404).json({ status: 404, error: 'Contacto no encontrado.' });
 
-  if (req.body.name !== undefined) contact.name = req.body.name.trim();
-  
-  if (req.body.email !== undefined) {
-    if (!req.body.email.includes('@')) {
-      return res.status(400).json({ error: 'El email debe contener un @.' });
+  const { name, email, phone } = req.body;
+
+  if (email !== undefined) {
+    if (!EMAIL_REGEX.test(email)) {
+      return res.status(400).json({ status: 400, error: 'El formato del email es inválido.' });
     }
-    contact.email = req.body.email.trim();
+    const duplicate = contacts.find(
+      c => c.id !== contact.id && c.email.toLowerCase() === email.toLowerCase()
+    );
+    if (duplicate) {
+      return res.status(409).json({ status: 409, error: 'Ya existe un contacto con ese email.' });
+    }
+    contact.email = email.toLowerCase();
   }
-  
-  if (req.body.phone !== undefined) contact.phone = req.body.phone.trim();
 
-  res.status(200).json(contact);
+  if (name !== undefined) {
+    if (name.trim() === '') {
+      return res.status(400).json({ status: 400, error: 'El campo name no puede estar vacío.' });
+    }
+    contact.name = name.trim();
+  }
+
+  if (phone !== undefined) contact.phone = phone?.trim() || null;
+
+  res.json(contact);
+});
+
+
+app.patch('/api/contacts/:id/favorite', (req, res) => {
+  const contact = contacts.find(c => c.id === Number(req.params.id));
+  if (!contact) return res.status(404).json({ status: 404, error: 'Contacto no encontrado.' });
+  contact.favorite = !contact.favorite;
+  res.json(contact);
 });
 
 
 app.delete('/api/contacts/:id', (req, res) => {
-  const contactIndex = contacts.findIndex(c => c.id === Number(req.params.id));
-  
-  if (contactIndex === -1) {
-    return res.status(404).json({ error: 'Contacto no encontrado.' });
-  }
+  const index = contacts.findIndex(c => c.id === Number(req.params.id));
+  if (index === -1) return res.status(404).json({ status: 404, error: 'Contacto no encontrado.' });
+  contacts.splice(index, 1);
+  res.json({ message: 'Contacto eliminado.' });
+});
 
-  contacts.splice(contactIndex, 1);
-  res.status(200).json({ message: 'Contacto eliminado.' });
+
+app.use((req, res) => {
+  res.status(404).json({ status: 404, error: 'Ruta no encontrada.' });
+});
+
+
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ status: 500, error: 'Error interno del servidor.' });
 });
 
 module.exports = { app, resetContacts };
